@@ -1,0 +1,71 @@
+Логика запроса: Сначала отбираем кейсы за нужный период. Находим последний контакт по каждому кейсу. Суммируем платежи за 5 дней. В конце собираем все нужные столбцы вместе. 
+
+Как определяем последний контакт: Находим его через оконную функцию - группируем по case_id, сортируем по убыванию времени, с помощью ROW_NUMBER() присваиваем номера, затем берем только строки с номером 1.
+
+Запрос:
+
+-- Отбираем кейсы за период с 2026-03-01 по 2026-03-31
+WITH actual_cases AS (
+    SELECT case_id,
+           account_id,
+           strategy_name,
+           start_date
+    FROM collection_cases
+    WHERE start_date BETWEEN DATE '2026-03-01' AND DATE '2026-03-31'
+),
+
+-- Находим последний контакт по каждому кейсу
+last_contacts AS (
+    SELECT ac.case_id,
+           ac.account_id,
+           ac.strategy_name,
+           ce.event_dttm AS last_contact_dttm,
+           ce.channel AS last_channel,
+           ce.contact_result AS last_contact_result,
+
+           ROW_NUMBER() OVER (PARTITION BY ac.case_id ORDER BY ce.event_dttm DESC) AS rn
+
+    FROM actual_cases AS ac
+    INNER JOIN contact_events AS ce ON ce.case_id = ac.case_id
+),
+
+-- Находим последний контакт по каждому кейсу
+filtered_last_contacts AS (
+    SELECT *
+    FROM last_contacts
+    WHERE rn = 1
+),
+
+-- Суммируем платежи за 5 дней
+payments_5d AS (
+    SELECT flc.case_id,
+           SUM(p.payment_amount) AS payment_amount_5d
+
+    FROM filtered_last_contacts AS flc
+    INNER JOIN payments AS p 
+        ON p.account_id = flc.account_id
+       AND p.payment_amount > 0
+       AND p.payment_dttm >= flc.last_contact_dttm
+       AND p.payment_dttm < flc.last_contact_dttm + INTERVAL '5 days'
+
+    GROUP BY lc.case_id
+)
+
+--Собираем все необходимые столбцы в одну таблицу
+SELECT flc.case_id,
+       flc.account_id,
+       flc.strategy_name,
+       flc.last_contact_dttm,
+       flc.last_channel,
+       flc.last_contact_result,
+
+       CASE 
+           WHEN p.payment_amount_5d IS NOT NULL THEN 1
+           ELSE 0
+       END AS payment_in_5d_flag,
+
+       COALESCE(p.payment_amount_5d, 0) AS payment_amount_5d
+
+FROM filtered_last_contacts AS flc
+
+LEFT JOIN payments_5d p ON flc.case_id = p.case_id
