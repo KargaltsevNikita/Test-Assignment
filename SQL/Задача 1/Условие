@@ -1,0 +1,61 @@
+### SQL-1. Эффективность стратегий в первые 7 дней
+
+#### Контекст
+
+В команде взыскания есть несколько стратегий работы с клиентами. Нужно понять, как они отрабатывают в первую неделю после старта кейса.
+
+#### Даны таблицы
+
+`collection_cases`
+
+* `case_id` - идентификатор кейса взыскания
+* `account_id` - идентификатор договора
+* `customer_id` - идентификатор клиента
+* `start_date` - дата старта кейса
+* `strategy_name` - стратегия взыскания
+* `dpd_bucket` - бакет просрочки (`1-30`, `31-60`, `61-90`, `90+`)
+
+`accounts`
+
+* `account_id`
+* `principal_amount` - сумма долга на момент старта кейса
+* `product_type`
+* `region`
+
+`contact_events`
+
+* `event_id`
+* `case_id`
+* `event_dttm` - дата и время контакта
+* `channel` - канал (`call`, `sms`, `email`)
+* `contact_result` - результат контакта (`RPC`, `No answer`, `Wrong number`, `Promise`)
+
+`payments`
+
+* `payment_id`
+* `account_id`
+* `payment_dttm`
+* `payment_amount`
+
+#### Бизнес-правила
+
+* Анализируем только кейсы со `start_date` в интервале `2026-02-01` - `2026-02-28`.
+* Кейс считается "контактированным", если по нему был хотя бы один контакт в окне от `start_date` до `start_date + 6 дней` включительно.
+* Кейс считается "оплаченным", если по его `account_id` был хотя бы один платеж с положительной суммой в окне от `start_date` до `start_date + 6 дней` включительно.
+* В `collected_amount_7d` нужно учитывать только положительные платежи в этом окне.
+
+#### Что нужно получить
+
+Соберите итоговую таблицу по `strategy_name` со следующими полями:
+
+* `strategy_name`
+* `total_cases`
+* `contacted_cases_7d`
+* `paid_cases_7d`
+* `collected_amount_7d`
+* `avg_collected_per_paid_case_7d`
+* `collection_rate_7d` = `collected_amount_7d / sum(principal_amount)`
+
+#### Что прислать
+
+SQL-запрос и 2-3 предложения с пояснением логики.
