@@ -1,0 +1,113 @@
+Логика запроса: Сначала отбираем кейсы за нужный период. Определяем, были ли успешные контакты за 7 дней. Находим все кейсы с обещанием в течение 7 дней и оставляет только самые последние по дате. 
+Далее, оцениваем выполнил ли клиент обещание. После этого, оцениваем платежи за 14 дней от старта кейса. В финале, агрегируем по неделе старта и стратегии, считаем кол-во кейсов и конверсию между этапами.
+
+
+Запрос:
+
+-- Отбираем кейсы за период с 2026-01-01 по 2026-03-31
+WITH actual_cases AS (
+    SELECT cc.case_id,
+           cc.account_id,
+           cc.strategy_name,
+           cc.start_date,
+           date_trunc('week', cc.start_date) AS week_start
+    FROM collection_cases AS cc
+    WHERE cc.start_date BETWEEN DATE '2026-01-01' AND DATE '2026-03-31'
+),
+
+-- Определяем, был ли успешный контакт за 7 дней
+rpc_7d AS (
+    SELECT DISTINCT ac.case_id
+    FROM actual_cases AS ac
+    INNER JOIN contact_events AS ce 
+        ON ce.case_id = ac.case_id
+       AND ce.event_dttm >= ac.start_date
+       AND ce.event_dttm < ac.start_date + INTERVAL '7 days'
+       AND ce.contact_result = 'RPC'
+),
+
+-- Находим все кейсы с обещанием за 7 дней
+promise_events AS (
+    SELECT ac.case_id,
+           ce.event_dttm,
+           ce.promise_to_pay_date,
+           ce.promised_amount,
+           ROW_NUMBER() OVER (PARTITION BY ac.case_id ORDER BY ce.event_dttm) AS rn
+    FROM actual_cases AS ac
+    INNER JOIN contact_events AS ce 
+        ON ce.case_id = ac.case_id
+       AND ce.event_dttm >= ac.start_date
+       AND ce.event_dttm < ac.start_date + INTERVAL '7 days'
+    WHERE ce.promised_amount > 0 
+          OR ce.promise_to_pay_date IS NOT NULL
+),
+
+-- Оставляем первое обещание по каждому кейсу
+first_promise AS (
+    SELECT *
+    FROM promise_events
+    WHERE rn = 1
+),
+
+-- Оцениваем, сколько клиент оплатил до обещанной даты
+payments_to_promise AS (
+    SELECT fp.case_id,
+           SUM(p.payment_amount) AS paid_before_promise
+    FROM first_promise AS fp
+    INNER JOIN payments AS p 
+        ON p.account_id = fp.account_id
+       AND p.payment_amount > 0
+       AND p.payment_dttm <= fp.promise_to_pay_date
+    GROUP BY fp.case_id
+),
+
+-- Определяем, выполнил ли клиент обещание
+-- Если оплатил обещанную суммы или больше, считаем обещание выполненным
+kept_promises AS (
+    SELECT fp.case_id
+    FROM first_promise AS fp
+    LEFT JOIN payments_to_promise AS ptp ON fp.case_id = ptp.case_id
+    WHERE COALESCE(ptp.paid_before_promise, 0) >= COALESCE(fp.promised_amount, 0)
+),
+
+-- Считаем платежи за 14 дней от старта кейса
+payments_14d AS (
+    SELECT ac.case_id,
+           SUM(p.payment_amount) AS recovery_amount_14d
+    FROM actual_cases AS ac
+    INNER JOIN payments AS p 
+        ON p.account_id = ac.account_id
+       AND p.payment_amount > 0
+       AND p.payment_dttm >= ac.start_date
+       AND p.payment_dttm < ac.start_date + INTERVAL '14 days'
+    GROUP BY ac.case_id
+)
+
+-- Собираем все необходимые столбцы в одну таблицу
+SELECT ac.week_start,
+       ac.strategy_name,
+       COUNT(*) AS total_cases,
+       COUNT(r.case_id) AS rpc_cases_7d,
+       COUNT(fp.case_id) AS promise_cases_7d,
+       COUNT(kp.case_id) AS kept_promise_cases,
+       COALESCE(SUM(p14.recovery_amount_14d), 0) AS recovery_amount_14d,
+       COUNT(r.case_id)::float / COUNT(*) AS rpc_rate_7d,
+       CASE 
+          WHEN COUNT(r.case_id) > 0
+          THEN COUNT(fp.case_id)::float / COUNT(r.case_id)
+          ELSE 0
+       END AS promise_rate_from_rpc,
+       CASE 
+          WHEN COUNT(fp.case_id) > 0
+          THEN COUNT(kp.case_id)::float / COUNT(fp.case_id)
+          ELSE 0
+       END AS kept_promise_rate       
+FROM actual_cases AS ac
+LEFT JOIN rpc_7d AS rp ON ac.case_id = rp.case_id
+LEFT JOIN first_promise AS fp ON ac.case_id = fp.case_id
+LEFT JOIN kept_promises AS kp ON ac.case_id = kp.case_id
+LEFT JOIN payments_14d AS p14 ON ac.case_id = p14.case_id
+GROUP BY c.week_start,
+         c.strategy_name
+ORDER BY c.week_start,
+	 c.strategy_name;
