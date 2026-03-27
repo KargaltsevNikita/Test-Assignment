@@ -1,0 +1,59 @@
+### Python-1. Очистка данных и базовая витрина по взысканию
+
+#### Контекст
+
+Нужно быстро собрать простую аналитическую витрину для еженедельного контроля результатов взыскания.
+
+#### Даны файлы
+
+`cases.csv`
+
+* `case_id`
+* `account_id`
+* `customer_id`
+* `start_date`
+* `dpd_bucket`
+* `strategy_name`
+* `principal_amount`
+
+`contacts.csv`
+
+* `event_id`
+* `case_id`
+* `event_dttm`
+* `channel`
+* `contact_result`
+
+`payments.csv`
+
+* `payment_id`
+* `account_id`
+* `payment_dttm`
+* `payment_amount`
+
+#### Бизнес-правила
+
+Нужно написать функцию `build_collection_summary(cases, contacts, payments)`, которая:
+
+* удаляет дубли в `contacts` по `event_id`, оставляя запись с максимальным `event_dttm`;
+* приводит даты к типу datetime;
+* исключает из `payments` строки с `payment_amount <= 0`;
+* считает по каждому `dpd_bucket`:
+  * `total_cases`
+* `contacted_cases_7d` - хотя бы один контакт в окне от `start_date` до `start_date + 6 дней`
+* `paid_cases_7d` - хотя бы один платеж в окне от `start_date` до `start_date + 6 дней`
+  * `collected_amount_7d`
+  * `avg_payment_per_paid_case_7d`
+
+#### Что нужно получить
+
+Функцию, которая возвращает `DataFrame`, отсортированный по бакетам в порядке:
+
+* `1-30`
+* `31-60`
+* `61-90`
+* `90+`
+
+#### Что прислать
+
+Код функции и короткий пример вызова.
