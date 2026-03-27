@@ -1,4 +1,5 @@
-Логика запроса: Сначала отбираем кейсы за нужный период и подтягиваем сумму долга. Затем отдельно считаем факты контакта (через DISTINCT кейсов в окне 7 дней) и платежи (сумму по кейсу за те же 7 дней). В финале агрегируем по стратегии, считая количества кейсов, суммы сборов и производные метрики.
+Логика запроса: Сначала отбираем кейсы за нужный период и подтягиваем сумму долга. Затем отдельно считаем факты контакта (через DISTINCT кейсов в окне 7 дней) и платежи (сумму по кейсу за те же 7 дней). 
+В финале агрегируем по стратегии, считая количества кейсов, суммы сборов и производные метрики.
 
 Запрос:
 
@@ -10,84 +11,51 @@ WITH actual_cases AS (
            сc.start_date,
            aс.principal_amount
     FROM collection_cases AS cс
-    -- INNER JOIN нужен, чтобы подтянуть сумму долга (principal_amount)
     INNER JOIN accounts AS aс ON cс.account_id = aс.account_id
-    -- фильтруем кейсы только за нужный период
     WHERE cс.start_date BETWEEN DATE '2026-02-01' AND DATE '2026-02-28'
 ),
 
 -- Считаем все контакты за первые 7 дней
 contact_events_7d AS (
     SELECT DISTINCT ac.case_id
-        -- DISTINCT нужен, чтобы каждый кейс учитывался только один раз,
-        -- даже если было несколько контактов
     FROM actual_cases AS ac
     INNER JOIN contact_events AS ce 
         ON ce.case_id = ac.case_id
        AND ce.event_dttm >= ac.start_date
        AND ce.event_dttm < ac.start_date + INTERVAL '7 days'
-       -- ограничиваем события окном 7 дней (start_date + 6 дней включительно)
 ),
 
 -- Считаем сумму платежей за первые 7 дней
 payments_7d AS (
     SELECT ac.case_id,
-	   -- SUM считает общую сумму платежей по кейсу за 7 дней
            SUM(p.payment_amount) AS collected_amount
     FROM actual_cases AS ac
     INNER JOIN payments AS p 
         ON p.account_id = ac.account_id
-       -- учитываем только положительные платежи
        AND p.payment_amount > 0
        AND p.payment_dttm >= c.start_date
-       -- фильтр по тому же 7-дневному окну
        AND p.payment_dttm < c.start_date + INTERVAL '7 days'
-    -- группируем по кейсу, чтобы получить сумму на кейс
     GROUP BY ac.case_id
 )
 
 -- Собираем все необходимые столбцы в одну таблицу
 SELECT 
     ac.strategy_name,
-
     COUNT(*) AS total_cases,
-        -- общее количество кейсов по стратегии
-
     COUNT(ct.case_id) AS contacted_cases_7d,
-        -- считаем кейсы, у которых был контакт (через LEFT JOIN)
-        -- COUNT по полю считает только НЕ NULL значения
-
     COUNT(p.case_id) AS paid_cases_7d,
-        -- количество кейсов с хотя бы одним платежом
-
     COALESCE(SUM(p.collected_amount), 0) AS collected_amount_7d,
-        -- суммарные сборы по стратегии
-        -- COALESCE заменяет NULL на 0, если платежей не было
-
     CASE 
         WHEN COUNT(p.case_id) > 0 
         THEN SUM(p.collected_amount) / COUNT(p.case_id)
         ELSE 0
     END AS avg_collected_per_paid_case_7d,
-        -- средний сбор на оплаченный кейс
-        -- защита от деления на 0
-
     CASE 
-        WHEN SUM(c.principal_amount) > 0 
-        THEN COALESCE(SUM(p.collected_amount), 0) / SUM(c.principal_amount)
+        WHEN SUM(ac.principal_amount) > 0 
+        THEN COALESCE(SUM(p.collected_amount), 0) / SUM(ac.principal_amount)
         ELSE 0
     END AS collection_rate_7d
-        -- доля взыскания: сколько собрали от общей суммы долга
-        -- также защита от деления на 0
-
 FROM actual_cases AS ac
-
-LEFT JOIN contacts_7d AS ct 
-    ON ac.case_id = ct.case_id
-    -- LEFT JOIN, чтобы не потерять кейсы без контактов
-
-LEFT JOIN payments_7d AS p 
-    ON ac.case_id = p.case_id
-    -- LEFT JOIN, чтобы сохранить кейсы без платежей
-
+LEFT JOIN contacts_7d AS ct ON ac.case_id = ct.case_id
+LEFT JOIN payments_7d AS p ON ac.case_id = p.case_id
 GROUP BY ac.strategy_name;
