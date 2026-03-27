@@ -22,9 +22,7 @@ last_contacts AS (
            ce.event_dttm AS last_contact_dttm,
            ce.channel AS last_channel,
            ce.contact_result AS last_contact_result,
-
            ROW_NUMBER() OVER (PARTITION BY ac.case_id ORDER BY ce.event_dttm DESC) AS rn
-
     FROM actual_cases AS ac
     INNER JOIN contact_events AS ce ON ce.case_id = ac.case_id
 ),
@@ -40,14 +38,12 @@ filtered_last_contacts AS (
 payments_5d AS (
     SELECT flc.case_id,
            SUM(p.payment_amount) AS payment_amount_5d
-
     FROM filtered_last_contacts AS flc
     INNER JOIN payments AS p 
         ON p.account_id = flc.account_id
        AND p.payment_amount > 0
        AND p.payment_dttm >= flc.last_contact_dttm
        AND p.payment_dttm < flc.last_contact_dttm + INTERVAL '5 days'
-
     GROUP BY lc.case_id
 )
 
@@ -58,14 +54,10 @@ SELECT flc.case_id,
        flc.last_contact_dttm,
        flc.last_channel,
        flc.last_contact_result,
-
        CASE 
            WHEN p.payment_amount_5d IS NOT NULL THEN 1
            ELSE 0
        END AS payment_in_5d_flag,
-
        COALESCE(p.payment_amount_5d, 0) AS payment_amount_5d
-
 FROM filtered_last_contacts AS flc
-
 LEFT JOIN payments_5d p ON flc.case_id = p.case_id
