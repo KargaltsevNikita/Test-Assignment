@@ -60,4 +60,4 @@ SELECT flc.case_id,
        END AS payment_in_5d_flag,
        COALESCE(p.payment_amount_5d, 0) AS payment_amount_5d
 FROM filtered_last_contacts AS flc
-LEFT JOIN payments_5d p ON flc.case_id = p.case_id
+LEFT JOIN payments_5d AS p ON flc.case_id = p.case_id
